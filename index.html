@@ -69,6 +69,7 @@
             width: 18px; height: 18px; border: 1px solid #999; 
             border-radius: 50%; margin-right: 15px; cursor: pointer;
             transition: all 0.2s; display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
         }
         .circle:hover { border-color: var(--primary-red); background: #fff5f5; }
         
@@ -87,9 +88,16 @@
         }
 
         .task-date-tag { font-size: 11px; color: var(--primary-red); margin-top: 2px; }
-        .delete-task { opacity: 1; transition: 0.2s; cursor: pointer; padding: 5px; }
-        .task-card:hover .delete-task { opacity: 0.5; }
-        .delete-task:hover { opacity: 1 !important; color: var(--primary-red); }
+
+        .delete-task { 
+            cursor: pointer; 
+            padding: 5px 10px; 
+            color: #ccc; 
+            font-size: 16px;
+            transition: color 0.2s;
+            flex-shrink: 0;
+        }
+        .delete-task:hover { color: var(--primary-red); }
 
         /* --- FOOTER NAV --- */
         .sidebar-footer {
@@ -109,9 +117,9 @@
             background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center;
         }
         .modal { background: white; width: 90%; max-width: 420px; padding: 25px; border-radius: 12px; box-shadow: 0 15px 50px rgba(0,0,0,0.2); }
-        .modal h3 { margin-bottom: 10px; font-size: 18px; }
+        .modal h3 { margin-bottom: 15px; font-size: 18px; }
         .modal input[type="text"], .modal input[type="date"], .modal input[type="file"] {
-            width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px;
+            width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; outline: none;
         }
         
         #profile-preview {
@@ -124,11 +132,6 @@
         .btn { padding: 12px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; flex: 1; }
         .btn-red { background: var(--primary-red); color: white; }
         .btn-outline { background: transparent; border: 1px solid #ddd; color: #666; }
-
-        @media (max-width: 600px) {
-            body { flex-direction: column; }
-            .sidebar { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-        }
 
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
     </style>
@@ -198,11 +201,50 @@
 
         window.onload = () => {
             document.getElementById('current-date').innerText = new Date().toDateString();
-            if (!profile) { openModal('profile'); document.getElementById('cancel-profile-btn').style.display = 'none'; } 
-            else { renderProfile(); requestNotificationPermission(); }
+            if (!profile) { 
+                openModal('profile'); 
+                document.getElementById('cancel-profile-btn').style.display = 'none'; 
+            } else { 
+                renderProfile(); 
+                requestNotificationPermission(); 
+            }
             render();
             checkTaskDeadlines();
         };
+
+        // --- NOTIFICATION LOGIC ---
+        function requestNotificationPermission() {
+            if ("Notification" in window && Notification.permission !== "granted") {
+                Notification.requestPermission();
+            }
+        }
+
+        function triggerNotification(title, message) {
+            if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(title, {
+                    body: message,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/906/906334.png' // Task icon
+                });
+            }
+        }
+
+        function checkTaskDeadlines() {
+            const todayStr = new Date().toISOString().split('T')[0];
+            let changes = false;
+
+            tasks.forEach(t => {
+                // Trigger if task is due today, not completed, and hasn't notified yet
+                if (t.date === todayStr && !t.completed && !t.notified) {
+                    triggerNotification("Task Due Today!", `Don't forget: ${t.name}`);
+                    t.notified = true; // Mark as notified
+                    changes = true;
+                }
+            });
+
+            if (changes) {
+                localStorage.setItem('t_data', JSON.stringify(tasks));
+            }
+        }
 
         // --- CORE FUNCTIONS ---
         function render() {
@@ -234,7 +276,7 @@
                         <span>${t.name}</span>
                         ${t.date ? `<span class="task-date-tag">📅 ${t.date}</span>` : ''}
                     </div>
-                    <div class="delete-task" onclick="removeTask(${t.id})">✕</div>
+                    <div class="delete-task" title="Delete Task" onclick="removeTask(${t.id})">✕</div>
                 `;
                 tCont.appendChild(div);
             });
@@ -252,9 +294,18 @@
             const name = document.getElementById('task-name-input').value;
             const date = document.getElementById('task-date-input').value;
             if (!name) return;
-            tasks.push({ name, date, project: currentView, id: Date.now(), completed: false });
+            tasks.push({ 
+                name, 
+                date, 
+                project: currentView, 
+                id: Date.now(), 
+                completed: false,
+                notified: false // Initial notification state
+            });
             localStorage.setItem('t_data', JSON.stringify(tasks));
-            closeModals(); render();
+            closeModals(); 
+            render(); 
+            checkTaskDeadlines(); // Check immediately after adding
             document.getElementById('task-name-input').value = '';
         }
 
@@ -269,7 +320,6 @@
             render();
         }
 
-        // --- CLEAR FUNCTIONS ---
         function clearAllTasks() {
             if (tasks.length === 0) return;
             if (confirm("Delete ALL tasks permanently?")) {
@@ -280,31 +330,23 @@
         }
 
         function clearAllProjects() {
-            if (projects.length === 0) {
-                alert("No projects to clear!");
-                return;
-            }
-            if (confirm("Are you sure you want to delete ALL projects? This will move project-specific tasks to the Inbox view.")) {
+            if (projects.length === 0) { alert("No projects to clear!"); return; }
+            if (confirm("Delete ALL projects? Tasks will be moved to Inbox.")) {
                 projects = [];
                 localStorage.setItem('p_data', JSON.stringify(projects));
-                
-                // Optional: Cleanup tasks that belonged to projects
-                // We keep them but set their project to 'Inbox' so they aren't lost
                 tasks.forEach(t => {
-                    if (t.project !== 'Inbox' && t.project !== 'Today') {
-                        t.project = 'Inbox';
-                    }
+                    if (t.project !== 'Inbox' && t.project !== 'Today') t.project = 'Inbox';
                 });
                 localStorage.setItem('t_data', JSON.stringify(tasks));
-                
                 switchView('Inbox');
             }
         }
 
-        // --- UTILS ---
         function switchView(view) {
             currentView = view;
             document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            const navBtn = document.getElementById(`nav-${view}`);
+            if (navBtn) navBtn.classList.add('active');
             document.getElementById('view-title').innerText = view;
             render();
         }
@@ -324,7 +366,9 @@
             if (!nameInput) return;
             profile = { name: nameInput, img: imgData.includes('base64') ? imgData : '' };
             localStorage.setItem('u_profile', JSON.stringify(profile));
-            renderProfile(); closeModals();
+            renderProfile(); 
+            closeModals();
+            requestNotificationPermission(); // Request permission when profile is saved
         }
 
         function renderProfile() {
@@ -341,18 +385,6 @@
                 placeholder.style.display = 'flex';
                 placeholder.innerText = profile.name.charAt(0).toUpperCase();
             }
-        }
-
-        function requestNotificationPermission() { if ("Notification" in window) Notification.requestPermission(); }
-        function checkTaskDeadlines() {
-            const todayStr = new Date().toISOString().split('T')[0];
-            tasks.forEach(t => {
-                if (t.date === todayStr && !t.notified && !t.completed) {
-                    new Notification("Task Due Today!", { body: t.name });
-                    t.notified = true; 
-                    localStorage.setItem('t_data', JSON.stringify(tasks));
-                }
-            });
         }
     </script>
 </body>
