@@ -64,12 +64,44 @@
             display: flex; align-items: center; padding: 12px 0;
             border-bottom: 1px solid var(--border); animation: fadeIn 0.3s;
         }
+        
         .circle {
             width: 18px; height: 18px; border: 1px solid #999; 
             border-radius: 50%; margin-right: 15px; cursor: pointer;
+            transition: all 0.2s; display: flex; align-items: center; justify-content: center;
         }
+        .circle:hover { border-color: var(--primary-red); background: #fff5f5; }
+        
+        .circle.completed {
+            background: var(--primary-red);
+            border-color: var(--primary-red);
+        }
+        .circle.completed::after {
+            content: '✓'; color: white; font-size: 11px; font-weight: bold;
+        }
+
         .task-info { flex: 1; display: flex; flex-direction: column; }
+        .task-card.completed span {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+
         .task-date-tag { font-size: 11px; color: var(--primary-red); margin-top: 2px; }
+        .delete-task { opacity: 1; transition: 0.2s; cursor: pointer; padding: 5px; }
+        .task-card:hover .delete-task { opacity: 0.5; }
+        .delete-task:hover { opacity: 1 !important; color: var(--primary-red); }
+
+        /* --- FOOTER NAV --- */
+        .sidebar-footer {
+            margin-top: auto;
+            border-top: 1px solid var(--border);
+            padding-top: 10px;
+        }
+        .clear-nav {
+            color: #999 !important;
+            font-size: 13px !important;
+        }
+        .clear-nav:hover { color: var(--primary-red) !important; }
 
         /* --- MODALS --- */
         .overlay {
@@ -78,7 +110,6 @@
         }
         .modal { background: white; width: 90%; max-width: 420px; padding: 25px; border-radius: 12px; box-shadow: 0 15px 50px rgba(0,0,0,0.2); }
         .modal h3 { margin-bottom: 10px; font-size: 18px; }
-        .modal p { font-size: 13px; color: #666; margin-bottom: 20px; }
         .modal input[type="text"], .modal input[type="date"], .modal input[type="file"] {
             width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px;
         }
@@ -126,6 +157,15 @@
             <span class="plus-icon" onclick="openModal('project')">+</span>
         </div>
         <ul id="project-list" style="list-style: none;"></ul>
+
+        <div class="sidebar-footer">
+            <div class="nav-item clear-nav" onclick="clearAllProjects()">
+                <span class="nav-icon">📁</span> Clear All Projects
+            </div>
+            <div class="nav-item clear-nav" onclick="clearAllTasks()">
+                <span class="nav-icon">🗑️</span> Clear All Tasks
+            </div>
+        </div>
     </aside>
 
     <main class="main-content">
@@ -136,15 +176,13 @@
 
     <div id="profile-modal" class="overlay">
         <div class="modal">
-            <h3 id="profile-modal-title">Welcome to ProTask!</h3>
-            <p id="profile-modal-desc">Please set up your profile to continue.</p>
+            <h3>Set up Profile</h3>
             <img id="profile-preview" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
             <input type="text" id="user-name-input" placeholder="Your Name">
-            <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">Pick a profile picture (Optional):</label>
             <input type="file" id="user-img-input" accept="image/*" onchange="previewImage(event)">
             <div class="modal-btns">
                 <button id="cancel-profile-btn" class="btn btn-outline" onclick="closeModals()">Skip</button>
-                <button class="btn btn-red" onclick="saveProfile()">Start Organizing</button>
+                <button class="btn btn-red" onclick="saveProfile()">Save</button>
             </div>
         </div>
     </div>
@@ -160,105 +198,50 @@
 
         window.onload = () => {
             document.getElementById('current-date').innerText = new Date().toDateString();
-            
-            if (!profile) {
-                openModal('profile');
-                document.getElementById('cancel-profile-btn').style.display = 'none';
-            } else {
-                renderProfile();
-                requestNotificationPermission();
-            }
-            
+            if (!profile) { openModal('profile'); document.getElementById('cancel-profile-btn').style.display = 'none'; } 
+            else { renderProfile(); requestNotificationPermission(); }
             render();
             checkTaskDeadlines();
         };
 
-        function requestNotificationPermission() {
-            if ("Notification" in window && Notification.permission !== "granted") {
-                Notification.requestPermission();
-            }
-        }
+        // --- CORE FUNCTIONS ---
+        function render() {
+            const pList = document.getElementById('project-list');
+            pList.innerHTML = '';
+            projects.forEach((p) => {
+                const li = document.createElement('li');
+                li.className = `nav-item project-item ${currentView === p.name ? 'active' : ''}`;
+                li.onclick = () => switchView(p.name);
+                li.innerHTML = `<span class="nav-icon" style="color:${p.color}">#</span> ${p.name}`;
+                pList.appendChild(li);
+            });
 
-        function triggerNotification(title, message) {
-            if ("Notification" in window && Notification.permission === "granted") {
-                new Notification(title, {
-                    body: message,
-                    icon: 'https://cdn-icons-png.flaticon.com/512/906/906334.png'
-                });
-            }
-        }
+            const tCont = document.getElementById('task-container');
+            tCont.innerHTML = '';
+            const today = new Date().toISOString().split('T')[0];
+            let filtered = (currentView === 'Inbox') ? tasks : (currentView === 'Today' ? tasks.filter(t => t.date === today) : tasks.filter(t => t.project === currentView));
 
-        // --- DEADLINE CHECKER ---
-        function checkTaskDeadlines() {
-            const todayStr = new Date().toISOString().split('T')[0];
-            tasks.forEach(t => {
-                // Only notify if date matches today and hasn't been notified yet (session based)
-                if (t.date === todayStr && !t.notified) {
-                    triggerNotification("Task Due Today!", `Don't forget: ${t.name}`);
-                    t.notified = true; // Temporary flag to prevent spamming while app is open
-                }
+            if (filtered.length === 0) {
+                tCont.innerHTML = `<p style="color:#aaa; text-align:center; margin-top:50px;">No tasks here.</p>`;
+            }
+
+            filtered.forEach(t => {
+                const div = document.createElement('div');
+                div.className = `task-card ${t.completed ? 'completed' : ''}`;
+                div.innerHTML = `
+                    <div class="circle ${t.completed ? 'completed' : ''}" onclick="toggleTask(${t.id})"></div>
+                    <div class="task-info">
+                        <span>${t.name}</span>
+                        ${t.date ? `<span class="task-date-tag">📅 ${t.date}</span>` : ''}
+                    </div>
+                    <div class="delete-task" onclick="removeTask(${t.id})">✕</div>
+                `;
+                tCont.appendChild(div);
             });
         }
 
-        // --- PROFILE LOGIC ---
-        function previewImage(event) {
-            const reader = new FileReader();
-            reader.onload = () => document.getElementById('profile-preview').src = reader.result;
-            reader.readAsDataURL(event.target.files[0]);
-        }
-
-        function saveProfile() {
-            const nameInput = document.getElementById('user-name-input').value;
-            const imgData = document.getElementById('profile-preview').src;
-
-            if (!nameInput) {
-                alert("Please enter a name!");
-                return;
-            }
-
-            const firstTime = !profile;
-            profile = { name: nameInput, img: imgData.includes('base64') ? imgData : '' };
-            localStorage.setItem('u_profile', JSON.stringify(profile));
-            
-            renderProfile();
-            closeModals();
-            
-            if (firstTime) {
-                requestNotificationPermission();
-                setTimeout(() => {
-                    triggerNotification(`Welcome, ${profile.name}!`, "Your ProTask Elite setup is complete.");
-                }, 1000);
-            }
-
-            document.getElementById('cancel-profile-btn').style.display = 'block';
-        }
-
-        function renderProfile() {
-            if(!profile) return;
-            document.getElementById('display-name').innerText = profile.name;
-            document.getElementById('user-name-input').value = profile.name;
-            
-            const avatarImg = document.getElementById('display-avatar');
-            const placeholder = document.getElementById('avatar-placeholder');
-
-            if (profile.img) {
-                avatarImg.src = profile.img;
-                avatarImg.style.display = 'block';
-                placeholder.style.display = 'none';
-                document.getElementById('profile-preview').src = profile.img;
-            } else {
-                avatarImg.style.display = 'none';
-                placeholder.style.display = 'flex';
-                placeholder.innerText = profile.name.charAt(0).toUpperCase();
-            }
-        }
-
-        // --- GLOBAL HELPERS ---
-        function openModal(type) { document.getElementById(type + '-modal').style.display = 'flex'; }
-        function closeModals() { document.querySelectorAll('.overlay').forEach(o => o.style.display = 'none'); }
-
         function saveProject() {
-            const name = document.getElementById('proj-name-input').value;
+            const name = document.getElementById('proj-name-input').value.trim();
             if (!name) return;
             projects.push({ name, color: document.getElementById('proj-color-input').value });
             localStorage.setItem('p_data', JSON.stringify(projects));
@@ -269,11 +252,15 @@
             const name = document.getElementById('task-name-input').value;
             const date = document.getElementById('task-date-input').value;
             if (!name) return;
-            tasks.push({ name, date, project: currentView, id: Date.now() });
+            tasks.push({ name, date, project: currentView, id: Date.now(), completed: false });
             localStorage.setItem('t_data', JSON.stringify(tasks));
-            closeModals(); 
-            render();
-            checkTaskDeadlines(); // Check immediately after adding
+            closeModals(); render();
+            document.getElementById('task-name-input').value = '';
+        }
+
+        function toggleTask(id) {
+            const task = tasks.find(t => t.id === id);
+            if (task) { task.completed = !task.completed; localStorage.setItem('t_data', JSON.stringify(tasks)); render(); }
         }
 
         function removeTask(id) {
@@ -282,6 +269,39 @@
             render();
         }
 
+        // --- CLEAR FUNCTIONS ---
+        function clearAllTasks() {
+            if (tasks.length === 0) return;
+            if (confirm("Delete ALL tasks permanently?")) {
+                tasks = [];
+                localStorage.setItem('t_data', JSON.stringify(tasks));
+                render();
+            }
+        }
+
+        function clearAllProjects() {
+            if (projects.length === 0) {
+                alert("No projects to clear!");
+                return;
+            }
+            if (confirm("Are you sure you want to delete ALL projects? This will move project-specific tasks to the Inbox view.")) {
+                projects = [];
+                localStorage.setItem('p_data', JSON.stringify(projects));
+                
+                // Optional: Cleanup tasks that belonged to projects
+                // We keep them but set their project to 'Inbox' so they aren't lost
+                tasks.forEach(t => {
+                    if (t.project !== 'Inbox' && t.project !== 'Today') {
+                        t.project = 'Inbox';
+                    }
+                });
+                localStorage.setItem('t_data', JSON.stringify(tasks));
+                
+                switchView('Inbox');
+            }
+        }
+
+        // --- UTILS ---
         function switchView(view) {
             currentView = view;
             document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
@@ -289,27 +309,49 @@
             render();
         }
 
-        function render() {
-            const pList = document.getElementById('project-list');
-            pList.innerHTML = '';
-            projects.forEach((p) => {
-                const li = document.createElement('li');
-                li.className = `nav-item project-item ${currentView === p.name ? 'active' : ''}`;
-                li.onclick = () => switchView(p.name);
-                li.innerHTML = `<div class="project-meta"><span class="nav-icon" style="color:${p.color}">#</span> ${p.name}</div>`;
-                pList.appendChild(li);
-            });
+        function openModal(type) { document.getElementById(type + '-modal').style.display = 'flex'; }
+        function closeModals() { document.querySelectorAll('.overlay').forEach(o => o.style.display = 'none'); }
+        
+        function previewImage(event) {
+            const reader = new FileReader();
+            reader.onload = () => document.getElementById('profile-preview').src = reader.result;
+            reader.readAsDataURL(event.target.files[0]);
+        }
 
-            const tCont = document.getElementById('task-container');
-            tCont.innerHTML = '';
-            const today = new Date().toISOString().split('T')[0];
-            let filtered = (currentView === 'Inbox') ? tasks : (currentView === 'Today' ? tasks.filter(t => t.date === today) : tasks.filter(t => t.project === currentView));
+        function saveProfile() {
+            const nameInput = document.getElementById('user-name-input').value;
+            const imgData = document.getElementById('profile-preview').src;
+            if (!nameInput) return;
+            profile = { name: nameInput, img: imgData.includes('base64') ? imgData : '' };
+            localStorage.setItem('u_profile', JSON.stringify(profile));
+            renderProfile(); closeModals();
+        }
 
-            filtered.forEach(t => {
-                const div = document.createElement('div');
-                div.className = 'task-card';
-                div.innerHTML = `<div class="circle" onclick="removeTask(${t.id})"></div><div class="task-info"><span>${t.name}</span>${t.date ? `<span class="task-date-tag">📅 ${t.date}</span>` : ''}</div>`;
-                tCont.appendChild(div);
+        function renderProfile() {
+            if(!profile) return;
+            document.getElementById('display-name').innerText = profile.name;
+            const avatarImg = document.getElementById('display-avatar');
+            const placeholder = document.getElementById('avatar-placeholder');
+            if (profile.img) {
+                avatarImg.src = profile.img;
+                avatarImg.style.display = 'block';
+                placeholder.style.display = 'none';
+            } else {
+                avatarImg.style.display = 'none';
+                placeholder.style.display = 'flex';
+                placeholder.innerText = profile.name.charAt(0).toUpperCase();
+            }
+        }
+
+        function requestNotificationPermission() { if ("Notification" in window) Notification.requestPermission(); }
+        function checkTaskDeadlines() {
+            const todayStr = new Date().toISOString().split('T')[0];
+            tasks.forEach(t => {
+                if (t.date === todayStr && !t.notified && !t.completed) {
+                    new Notification("Task Due Today!", { body: t.name });
+                    t.notified = true; 
+                    localStorage.setItem('t_data', JSON.stringify(tasks));
+                }
             });
         }
     </script>
