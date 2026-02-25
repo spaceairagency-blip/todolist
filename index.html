@@ -83,17 +83,18 @@
         .nav-item.active { background: #ffefe5; color: #b03d32; font-weight: 600; }
         .nav-icon { margin-right: 12px; width: 20px; text-align: center; }
 
-        /* Project specific styling */
         .project-item { justify-content: space-between; }
-        .project-link { display: flex; align-items: center; flex: 1; }
+        .project-link { display: flex; align-items: center; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+        /* Project delete button always visible */
         .delete-project { 
-            opacity: 0; 
+            opacity: 1; 
             font-size: 12px; 
-            color: #ccc; 
+            color: #bbb; 
             padding: 5px;
             transition: 0.2s;
+            margin-left: 8px;
         }
-        .nav-item:hover .delete-project { opacity: 1; }
         .delete-project:hover { color: var(--primary-red); }
 
         .add-btn { color: var(--primary-red); font-weight: 700; margin-bottom: 10px; margin-top: 10px; }
@@ -138,7 +139,7 @@
         .delete-task { cursor: pointer; padding: 5px 10px; color: #ccc; font-size: 16px; transition: color 0.2s; flex-shrink: 0; }
         .delete-task:hover { color: var(--primary-red); }
 
-        /* --- MODALS --- */
+        /* Modals */
         .overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.4); z-index: 2000; align-items: center; justify-content: center;
@@ -154,7 +155,7 @@
         .btn-red { background: var(--primary-red); color: white; }
         .btn-outline { background: transparent; border: 1px solid #ddd; color: #666; }
 
-        /* --- RESPONSIVE --- */
+        /* Responsive */
         .sidebar-mask {
             display: none; position: fixed; top:0; left:0; width:100%; height:100%;
             background: rgba(0,0,0,0.2); z-index: 999;
@@ -213,6 +214,9 @@
         </div>
 
         <div class="sidebar-footer">
+            <div class="nav-item" id="notif-btn" onclick="requestNotifPermission()" style="color: #5a67d8;">
+                <span class="nav-icon">🔔</span> Enable Notifications
+            </div>
             <div class="nav-item clear-nav" onclick="clearAllProjects()">
                 <span class="nav-icon">📁</span> Clear All Projects
             </div>
@@ -233,11 +237,11 @@
     <div id="profile-modal" class="overlay">
         <div class="modal">
             <h3>Set up Profile</h3>
-            <img id="profile-preview" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+            <img id="profile-preview" style="width: 60px; height: 60px; border-radius: 50%; margin-bottom: 10px; object-fit: cover;" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
             <input type="text" id="user-name-input" placeholder="Your Name">
             <input type="file" id="user-img-input" accept="image/*" onchange="previewImage(event)">
             <div class="modal-btns">
-                <button id="cancel-profile-btn" class="btn btn-outline" onclick="closeModals()">Skip</button>
+                <button class="btn btn-outline" onclick="closeModals()">Skip</button>
                 <button class="btn btn-red" onclick="saveProfile()">Save</button>
             </div>
         </div>
@@ -252,8 +256,11 @@
         window.onload = () => {
             document.getElementById('current-date').innerText = new Date().toDateString();
             if (!profile) { openModal('profile'); } else { renderProfile(); }
+            updateNotifButton();
             render();
             checkTaskDeadlines();
+            // Check deadlines every minute
+            setInterval(checkTaskDeadlines, 60000);
         };
 
         function toggleMobileMenu() {
@@ -300,13 +307,50 @@
             });
         }
 
+        function requestNotifPermission() {
+            if (!("Notification" in window)) {
+                alert("This browser does not support notifications.");
+                return;
+            }
+            Notification.requestPermission().then(permission => {
+                updateNotifButton();
+                if (permission === "granted") checkTaskDeadlines();
+            });
+        }
+
+        function updateNotifButton() {
+            const btn = document.getElementById('notif-btn');
+            if (Notification.permission === "granted") {
+                btn.style.display = 'none';
+            }
+        }
+
+        function checkTaskDeadlines() {
+            if (Notification.permission === "granted") {
+                const todayStr = new Date().toISOString().split('T')[0];
+                let changed = false;
+
+                tasks.forEach(t => {
+                    // Alert if task is due today, not completed, and hasn't notified yet today
+                    if (t.date === todayStr && !t.completed && !t.notified) {
+                        new Notification("Task Due Today!", {
+                            body: t.name,
+                            icon: 'https://cdn-icons-png.flaticon.com/512/906/906334.png'
+                        });
+                        t.notified = true;
+                        changed = true;
+                    }
+                });
+
+                if (changed) localStorage.setItem('t_data', JSON.stringify(tasks));
+            }
+        }
+
         function removeProject(index, event) {
-            event.stopPropagation(); // Prevents switching view when clicking delete
+            event.stopPropagation(); 
             const projectName = projects[index].name;
             if (confirm(`Delete project "${projectName}"?`)) {
-                // Move tasks to Inbox
                 tasks.forEach(t => { if (t.project === projectName) t.project = 'Inbox'; });
-                // Remove project
                 projects.splice(index, 1);
                 localStorage.setItem('p_data', JSON.stringify(projects));
                 localStorage.setItem('t_data', JSON.stringify(tasks));
@@ -346,6 +390,7 @@
             localStorage.setItem('t_data', JSON.stringify(tasks));
             closeModals(); render();
             document.getElementById('task-name-input').value = '';
+            checkTaskDeadlines();
         }
 
         function toggleTask(id) {
@@ -402,18 +447,6 @@
             } else {
                 avatarImg.style.display = 'none'; placeholder.style.display = 'flex';
                 placeholder.innerText = profile.name.charAt(0).toUpperCase();
-            }
-        }
-
-        function checkTaskDeadlines() {
-            if ("Notification" in window && Notification.permission === "granted") {
-                const todayStr = new Date().toISOString().split('T')[0];
-                tasks.forEach(t => {
-                    if (t.date === todayStr && !t.completed && !t.notified) {
-                        new Notification("Task Due Today!", { body: t.name });
-                        t.notified = true;
-                    }
-                });
             }
         }
     </script>
